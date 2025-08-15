@@ -1,8 +1,4 @@
-// CRITERIO: Configuración del cliente PocketBase para comunicación con backend
-// Este archivo centraliza la configuración de PocketBase para toda la aplicación
-import PocketBase from "pocketbase"
+import PocketBase from 'pocketbase';
 
-// Configuración del cliente PocketBase
-const pb = new PocketBase("http:// 10.236.135.22:8090") // Ajusta la URL según tu configuración
-
-export default pb
+// Cambia la URL por la de tu servidor de Pocketbase
+export const pb = new PocketBase('http://127.0.0.1:8090');

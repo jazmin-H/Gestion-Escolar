@@ -1,147 +1,78 @@
 "use client"
 
-// CRITERIO: Hook personalizado para manejar la lógica de datos del dashboard
-// Centraliza la obtención y actualización en tiempo real de los datos
-import { useState, useEffect } from "react"
-import pb from "../services/pocketbase.js"
+import { useState, useEffect, useCallback } from "react"
+import pb from "../services/pocketbase.js" // Asumo que esta ruta es correcta
 
 const useDashboardData = () => {
-  // Estados para cada métrica del dashboard
-  const [attendanceData, setAttendanceData] = useState({
+  // 1. Estado simplificado para manejar todo junto
+  const [data, setData] = useState({
     present: 0,
     total: 0,
-    loading: true,
+    absences: 0,
+    justifications: 0,
   })
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  const [absencesData, setAbsencesData] = useState({
-    count: 0,
-    loading: true,
-  })
+  // Usamos useCallback para que la función no se recree innecesariamente
+  const fetchDashboardData = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
 
-  const [justificationsData, setJustificationsData] = useState({
-    count: 0,
-    loading: true,
-  })
-
-  const getMockData = () => {
-    return {
-      attendance: { present: 17, total: 20 },
-      absences: { count: 2 },
-      justifications: { count: 1 },
-    }
-  }
-
-  // Función para obtener la fecha actual en formato YYYY-MM-DD
-  const getTodayDate = () => {
-    return new Date().toISOString().split("T")[0]
-  }
-
-  // CRITERIO: Obtener datos iniciales del dashboard
-  const fetchDashboardData = async () => {
     try {
-      const today = getTodayDate()
+      // 2. CORRECCIÓN: Usamos los nombres de colección EXACTOS de tu PocketBase
+      const [totalStudents, allTodayRecords, todayJustifications] = await Promise.all([
+        pb.collection("students").getFullList(),
+        pb.collection("attendance_management").getFullList({ filter: `created >= @today.start` }),
+        pb.collection("management_of_justifications").getFullList({ filter: `created >= @today.start` }),
+      ])
 
-      await pb.health.check()
+      // 3. CORRECCIÓN: Asumo que el campo se llama 'state' y el valor es 'present' o 'absent'
+      const presentStudents = allTodayRecords.filter((record) => record.state === 'present').length
+      const absentStudents = allTodayRecords.length - presentStudents
 
-      // CRITERIO: Obtener total de alumnos matriculados
-      const totalStudents = await pb.collection("alumnos").getFullList()
-
-      // CRITERIO: Obtener asistencias del día actual
-      const todayAttendances = await pb.collection("asistencias").getFullList({
-        filter: `fecha = "${today}" && presente = true`,
-      })
-
-      // CRITERIO: Calcular ausentes sin justificar
-      const allTodayRecords = await pb.collection("asistencias").getFullList({
-        filter: `fecha = "${today}"`,
-      })
-
-      const absentStudents = allTodayRecords.filter((record) => !record.presente)
-
-      // CRITERIO: Obtener justificaciones del día actual
-      const todayJustifications = await pb.collection("justificaciones").getFullList({
-        filter: `fecha = "${today}"`,
-      })
-
-      // Actualizar estados con los datos obtenidos
-      setAttendanceData({
-        present: todayAttendances.length,
+      setData({
+        present: presentStudents,
         total: totalStudents.length,
-        loading: false,
+        absences: absentStudents,
+        justifications: todayJustifications.length,
       })
-
-      setAbsencesData({
-        count: absentStudents.length,
-        loading: false,
-      })
-
-      setJustificationsData({
-        count: todayJustifications.length,
-        loading: false,
-      })
-    } catch (error) {
-      console.warn("PocketBase no disponible, usando datos de ejemplo:", error.message)
-
-      const mockData = getMockData()
-
-      setAttendanceData({
-        present: mockData.attendance.present,
-        total: mockData.attendance.total,
-        loading: false,
-      })
-
-      setAbsencesData({
-        count: mockData.absences.count,
-        loading: false,
-      })
-
-      setJustificationsData({
-        count: mockData.justifications.count,
-        loading: false,
-      })
+    } catch (err) {
+      console.error("Error al obtener datos de PocketBase:", err)
+      setError("No se pudieron cargar los datos.")
+    } finally {
+      setIsLoading(false)
     }
-  }
-
-  const setupRealtimeSubscriptions = () => {
-    try {
-      // CRITERIO: Suscripción a cambios en tiempo real para asistencias
-      const unsubscribeAttendances = pb.collection("asistencias").subscribe("*", (e) => {
-        console.log("Cambio detectado en asistencias:", e.action)
-        fetchDashboardData()
-      })
-
-      // CRITERIO: Suscripción a cambios en tiempo real para justificaciones
-      const unsubscribeJustifications = pb.collection("justificaciones").subscribe("*", (e) => {
-        console.log("Cambio detectado en justificaciones:", e.action)
-        fetchDashboardData()
-      })
-
-      return () => {
-        unsubscribeAttendances()
-        unsubscribeJustifications()
-      }
-    } catch (error) {
-      console.warn("No se pudieron configurar las suscripciones en tiempo real:", error.message)
-      return () => {} // Función vacía para cleanup
-    }
-  }
-
-  useEffect(() => {
-    // CRITERIO: Cargar datos iniciales al montar el componente
-    fetchDashboardData()
-
-    const cleanup = setupRealtimeSubscriptions()
-
-    // CRITERIO: Limpiar suscripciones al desmontar el componente
-    return cleanup
   }, [])
 
-  return {
-    attendanceData,
-    absencesData,
-    justificationsData,
-    refreshData: fetchDashboardData,
-  }
+  // 4. CORRECCIÓN: useEffect asíncrono para manejar suscripciones correctamente
+  useEffect(() => {
+    fetchDashboardData()
+
+    let unsubscribeStudents, unsubscribeAttendances, unsubscribeJustifications;
+
+    const setupSubscriptions = async () => {
+      try {
+        // Usamos 'await' y los nombres de colección correctos
+        unsubscribeStudents = await pb.collection('students').subscribe('*', fetchDashboardData);
+        unsubscribeAttendances = await pb.collection('attendance_management').subscribe('*', fetchDashboardData);
+        unsubscribeJustifications = await pb.collection('management_of_justifications').subscribe('*', fetchDashboardData);
+      } catch (error) {
+        console.error("No se pudo suscribir a los cambios en tiempo real:", error);
+      }
+    }
+
+    setupSubscriptions()
+
+    // La función de limpieza se ejecutará cuando el componente se desmonte
+    return () => {
+      if (unsubscribeStudents) unsubscribeStudents();
+      if (unsubscribeAttendances) unsubscribeAttendances();
+      if (unsubscribeJustifications) unsubscribeJustifications();
+    }
+  }, [fetchDashboardData])
+
+  return { data, isLoading, error, refreshData: fetchDashboardData }
 }
 
 export default useDashboardData
